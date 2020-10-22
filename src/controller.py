@@ -4,6 +4,7 @@ PKG = 'ilocator_control'
 import roslib; roslib.load_manifest(PKG)
 import rospkg
 from geometry_msgs.msg  import Twist
+from std_msg import String
 from turtlesim.msg import Pose
 import numpy as np
 import os
@@ -15,6 +16,7 @@ class ilocatorbot():
 	    #Creating our node,publisher and subscriber
 	    rospy.init_node('ilocatorbot_controller', anonymous=True)
 	    self.velocity_publisher = rospy.Publisher('/turtle1/cmd_vel', Twist, queue_size=10)
+	    self.control_status_publisher = rospy.Publisher('control_status',String,queue_size=10)
 	    self.pose_subscriber = rospy.Subscriber('/turtle1/pose', Pose, self.callback)
 	    self.pose = Pose()
 	    self.velocity = 0.3
@@ -39,11 +41,11 @@ class ilocatorbot():
 		p2 = 1
 		while p2 < len(self.path):
 			robot_pos = [self.pose.x, self.pose.y, self.pose.theta]
-			print(robot_pos)	
 
 			start_point = self.path[p1]
 			end_point = self.path[p2]
-			v,omega = self.purePursuitController(start_point, end_point, self.velocity, robot_pos,self.lookahead)
+			# v,omega = self.purePursuitController(start_point, end_point, self.velocity, robot_pos,self.lookahead)
+			v,omega = self.pidController(end_point, self.velocity, robot_pos)
 			vel_msg = Twist()
 
 			#linear velocity in the x-axis:
@@ -58,6 +60,7 @@ class ilocatorbot():
 
 			#Publishing our vel_msg
 			self.velocity_publisher.publish(vel_msg)
+			self.control_status_publisher.publish('On path.')
 			self.rate.sleep()
 
 			if np.linalg.norm(robot_pos[:2] - self.path[p2]) < 0.1:
@@ -66,6 +69,7 @@ class ilocatorbot():
 		vel_msg.linear.x = 0
 		vel_msg.angular.z = 0
 		self.velocity_publisher.publish(vel_msg)
+		self.control_status_publisher.publish('Finished at goal point.')
 		rospy.spin()
 
 
@@ -102,6 +106,12 @@ class ilocatorbot():
 	    robot_coord_matrix = np.matmul(np.linalg.inv(translation_matrix),pursuit_point_matrix)
 	    curvature = 2*robot_coord_matrix[1]/l**2
 	    omega = velocity*curvature
+	    return velocity, omega
+
+
+	def pidController(self, goal_point, velocity, robot_pos):	
+	    velocity = np.sqrt((goal_point[0] - robot_pos[0])**2 + (goal_point[1] - robot_pos[1])**2)
+	    omega =  np.arctan2(goal_point[1] - robot_pos[1], goal_point[0] - robot_pos[0]) - robot_pos[2]
 	    return velocity, omega
 
 
