@@ -61,7 +61,7 @@ class ilocatorbot():
 			self.control_status_publisher.publish('On path.')
 			self.rate.sleep()
 
-			# If at the goal point, change the  points fed to the controller.
+			# If at the goal point, change the points fed to the controller.
 			if np.linalg.norm(robot_pos[:2] - self.path[p2]) < 0.1:
 				p1 += 1
 				p2 += 1
@@ -78,8 +78,6 @@ class ilocatorbot():
 
 if __name__ == '__main__':
 	try:
-	    #Testing our function
 	    x = ilocatorbot()
 	    x.run()
-
 	except rospy.ROSInterruptException: pass
