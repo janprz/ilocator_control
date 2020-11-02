@@ -4,24 +4,29 @@ PKG = 'ilocator_control'
 import roslib; roslib.load_manifest(PKG)
 import rospkg
 from geometry_msgs.msg  import Twist
-from std_msg import String
+from std_msgs.msg import String
 from turtlesim.msg import Pose
 import numpy as np
 import os
-
+from utils.pure_pursuit import purePursuitController
 
 class ilocatorbot():
-
 	def __init__(self):
-	    #Creating our node,publisher and subscriber
+	    #Creating our node,publisher and subscriber.
 	    rospy.init_node('ilocatorbot_controller', anonymous=True)
 	    self.velocity_publisher = rospy.Publisher('/turtle1/cmd_vel', Twist, queue_size=10)
 	    self.control_status_publisher = rospy.Publisher('control_status',String,queue_size=10)
 	    self.pose_subscriber = rospy.Subscriber('/turtle1/pose', Pose, self.callback)
 	    self.pose = Pose()
+
+	    # Set up the velocity and lookahead distance.
 	    self.velocity = 0.3
 	    self.lookahead = 0.5
+
+	    # Read the path.
 	    self.path = np.genfromtxt(os.path.join(rospkg.RosPack().get_path('ilocator_control'),'data/path.csv'), delimiter = ',')
+
+	    # Set up the rate.
 	    self.rate = rospy.Rate(10)
 
 	#Callback function implementing the pose value received
@@ -29,11 +34,6 @@ class ilocatorbot():
 	    self.pose = data
 	    self.pose.x = round(self.pose.x, 4)
 	    self.pose.y = round(self.pose.y, 4)
-
-
-	def is_alive(self):
-		print(self.path)
-		rospy.spin()
 
 
 	def run(self):
@@ -44,75 +44,34 @@ class ilocatorbot():
 
 			start_point = self.path[p1]
 			end_point = self.path[p2]
-			# v,omega = self.purePursuitController(start_point, end_point, self.velocity, robot_pos,self.lookahead)
-			v,omega = self.pidController(end_point, self.velocity, robot_pos)
+			v,omega = purePursuitController(start_point, end_point, self.velocity, robot_pos,self.lookahead)
+			# v,omega = self.pidController(end_point, self.velocity, robot_pos)
 			vel_msg = Twist()
 
 			#linear velocity in the x-axis:
 			vel_msg.linear.x = self.velocity
-			vel_msg.linear.y = 0
-			vel_msg.linear.z = 0
+			vel_msg.linear.y, vel_msg.linear.z = 0,0
 
 			#angular velocity in the z-axis:
-			vel_msg.angular.x = 0
-			vel_msg.angular.y = 0
 			vel_msg.angular.z = omega
+			vel_msg.angular.x, vel_msg.angular.y = 0,0
 
 			#Publishing our vel_msg
 			self.velocity_publisher.publish(vel_msg)
 			self.control_status_publisher.publish('On path.')
 			self.rate.sleep()
 
+			# If at the goal point, change the  points fed to the controller.
 			if np.linalg.norm(robot_pos[:2] - self.path[p2]) < 0.1:
 				p1 += 1
 				p2 += 1
+
+		# When finished, stop the robot.
 		vel_msg.linear.x = 0
 		vel_msg.angular.z = 0
 		self.velocity_publisher.publish(vel_msg)
 		self.control_status_publisher.publish('Finished at goal point.')
 		rospy.spin()
-
-
-	def purePursuitController(self, p1, p2, velocity, robot_pos, l):	
-	    epsilon = 0.0001
-	    az = (p1[1]-p2[1])/(p1[0]-p2[0]+epsilon)
-	    bz = p1[1]-(p1[1]-p2[1])/(p1[0]-p2[0]+epsilon)*p1[0]
-	    dist_from_path = np.abs(az*robot_pos[0]-robot_pos[1]+bz+epsilon)/np.sqrt(az**2+1)
-	    dist_to_goal = np.sqrt((robot_pos[0]-p2[0])**2+(robot_pos[1]-p2[1])**2)
-	    if dist_from_path > l:
-	        ac = -1.0/(az+epsilon)
-	        bc = robot_pos[1]+(p1[0]-p2[0])/(p1[1]-p2[1])*robot_pos[0]
-	        xc_num = (robot_pos[1]+(p1[0]-p2[0])/(p1[1]-p2[1]+epsilon)*robot_pos[0]-p1[1]+(p1[1]-p2[1])/(p1[0]-p2[0]+epsilon)*p1[0])
-	        xc_den = (p1[1]-p2[1])/(p1[0]-p2[0]+epsilon) + (p1[0]-p2[0])/(p1[1]-p2[1]+epsilon)
-	        xc = xc_num/xc_den
-	        yc = ac*xc + bc
-	        pursuit_point = [xc, yc]
-	    else:
-	        if dist_to_goal <= l:
-	            pursuit_point = p2
-	            l = dist_to_goal
-	        else:
-	            coeffs = [1+az**2, 2*az*bz-2*az*robot_pos[1]-2*robot_pos[0], 
-	                      bz**2-2*bz*robot_pos[1]-l**2+robot_pos[0]**2+robot_pos[1]**2]
-	            roots = np.real(np.roots(coeffs))
-	            y = az*roots+bz
-	            distance = np.sqrt((roots-p2[0])**2+(y-p2[1])**2)
-	            min_root_index = np.argmin(distance)        
-	            pursuit_point = [roots[min_root_index],y[min_root_index]]
-	    translation_matrix = np.array([[np.cos(robot_pos[2]),-np.sin(robot_pos[2]), robot_pos[0]],
-	                          [np.sin(robot_pos[2]), np.cos(robot_pos[2]), robot_pos[1]],
-	                          [0, 0, 1]])
-	    pursuit_point_matrix = np.expand_dims(np.transpose([pursuit_point[0],pursuit_point[1], 1]),axis=1)
-	    robot_coord_matrix = np.matmul(np.linalg.inv(translation_matrix),pursuit_point_matrix)
-	    curvature = 2*robot_coord_matrix[1]/l**2
-	    omega = velocity*curvature
-	    return velocity, omega
-
-
-	def pidController(self, goal_point, velocity, robot_pos):	
-	    velocity = np.sqrt((goal_point[0] - robot_pos[0])**2 + (goal_point[1] - robot_pos[1])**2)
-	    omega =  np.arctan2(goal_point[1] - robot_pos[1], goal_point[0] - robot_pos[0]) - robot_pos[2]
-	    return velocity, omega
 
 
 
